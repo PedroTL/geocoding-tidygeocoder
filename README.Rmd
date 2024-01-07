@@ -1,0 +1,124 @@
+---
+output: github_document
+---
+## Packages
+
+```{r, RefineGeo_package, warning = FALSE, message = FALSE}
+# install.packages("devtools")
+devtools::install_github("PedroTL/RefineGeo")
+library(tidygeocoder)
+library(knitr)
+library(dplyr)
+```
+
+## Geocoding Data Preparation
+
+To start, we can acquire a sample data frame from the `RefineGeo` package. Typically, address information is distributed across separate columns. Here, we will assemble a complete address, which will serve as the input for Geocoding across three distinct services.
+
+```{r, warning = FALSE, message = FALSE}
+sample_address <- RefineGeo::sample_address
+
+knitr::kable(head(sample_address), align = "c")
+```
+
+The address information usually can be giving in separate columns. Here we are going to make a complete address, being the input for Geocoding in three different services.
+
+```{r, warning = FALSE, message = FALSE}
+# Creating a full address as input
+sample_address <- sample_address %>%
+  mutate(input_addr = RefineGeo::clean_address(paste(address,
+                                                     municipality,
+                                                     state,
+                                                     cep,
+                                                     country,
+                                                     sep = " ")))
+
+knitr::kable(head(sample_address), align = "c")
+```
+
+### Geocoding Combination
+
+Next, we'll utilize `tidygeocoder::geocode_combine` to extract Latitude, Longitude, and output addresses from three different Geocoding services: Arcgis, Bing, and Here.
+
+```{r, warning = FALSE, message = FALSE}
+response <- 
+  tidygeocoder::geocode_combine(
+  sample_address,
+  queries = list(
+    list(method = 'arcgis', mode = 'single'),
+    list(method = 'bing', mode = 'single'),
+    list(method = 'here', mode = 'single')
+  ),
+  global_params = list(address = 'input_addr', full_results = TRUE),
+  cascade = FALSE,
+  return_list = TRUE
+)
+```
+
+For Bing and Here services, it's necessary to set an API key in the environment. You can use `usethis::edit_r_environ()` to set `BINGMAPS_API_KEY = "Your_API_KEY"` and `HERE_API_KEY = "Your_API_KEY"`. When dealing with multiple addresses, consider using the `mode = 'batch'` argument and refer to `tidygeocoder::batch_limit_reference`. Approximately 3 minutes are required to obtain full results for all Geocoding services when dealing with 100 addresses.
+
+### Retrieving Responses for Each Service
+
+From the responses, our primary interest lies in obtaining the Latitude, Longitude, and the corresponding returned address.
+
+```{r, warning = FALSE, message = FALSE}
+arcgis_response <- response$arcgis
+arcgis_response <- arcgis_response %>%
+  select("input_addr", "input_cep" = "cep", "output_addr_1" = "arcgis_address", "lon1" = "location.x", "lat1" = "location.y") %>%
+  as.data.frame()
+
+knitr::kable(head(arcgis_response), align = "c")
+```
+
+This process is then repeated for the other two services.
+
+```{r, warning = FALSE, message = FALSE}
+bing_response <- response$bing
+bing_response <- bing_response %>%
+  select("input_addr", "input_cep" = "cep", "output_addr_2" = "name", "lon2" = "long", "lat2" = "lat") %>%
+  as.data.frame()
+
+knitr::kable(head(bing_response), align = "c")
+```
+
+```{r, warning = FALSE, message = FALSE}
+here_response <- response$here
+here_response <- here_response %>%
+  select("input_addr", "input_cep" = "cep", "output_addr_3" = "here_address.label", "output_addr_cep_3" = "here_address.postalCode" ,"lon3" = "long", "lat3" = "lat") %>%
+  as.data.frame()
+
+knitr::kable(head(here_response), align = "c")
+```
+
+### Compiling a Final Dataset
+
+```{r, warning = FALSE, message = FALSE}
+sample_address_geo <-
+  plyr::join_all(list(arcgis_response,
+                      bing_response,
+                      here_response),
+                 by = c("input_addr", "input_cep"),
+                 type = 'left') %>%
+  mutate("output_addr_cep_1" = RefineGeo::extr_cep(output_addr_1),
+         "output_addr_cep_2" = RefineGeo::extr_cep(output_addr_2),
+         "output_addr_cep_3" = RefineGeo::extr_cep(output_addr_cep_3),
+         "input_cep" = as.character(input_cep),
+         "output_addr_1" = RefineGeo::clean_address(output_addr_1),
+         "output_addr_2" = RefineGeo::clean_address(output_addr_2),
+         "output_addr_3" = RefineGeo::clean_address(output_addr_3)) %>%
+  select("input_addr", "input_cep", "output_addr_1", "output_addr_2", "output_addr_3", "output_addr_cep_1", "output_addr_cep_2", "output_addr_cep_3", "lat1", "lon1", "lat2", "lon2", "lat3", "lon3")
+
+knitr::kable(head(sample_address_geo), align = "c")
+```
+
+It's noteworthy that the `Here` Geocoding service provides the `PostCode` column already, requiring minimal cleaning. Depending on the chosen service, it's advisable to review all outputs before selecting variables. In essence, the optimal data set structure is outlined. Now, `RefineGeo` can be utilized to gain a more accurate perspective on the quality of the provided coordinates.
+
+This data is available in `RefineGeo::sample_address_geo`
+
+
+
+
+
+
+
+
